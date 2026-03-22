@@ -2,97 +2,57 @@
 
 [![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/<paperclip-template-slug>)
 
-Deploy [Paperclip](https://github.com/paperclipai/paperclip) to Railway with persistent state and template-preconfigured infrastructure.
-
-This template runs Paperclip from the published npm package (`paperclipai`) and bootstraps onboarding automatically on first run.
+Deploy [Paperclip](https://github.com/paperclipai/paperclip) to Railway with a token-gated setup flow and strict secrets defaults.
 
 ## What you get
 
-- Paperclip service running on Railway
-- First-boot onboarding built into entrypoint
-- Persistent app state on a Railway volume mounted at `/paperclip`
-- Public URL support via `PAPERCLIP_PUBLIC_URL` (or auto-derived from Railway domain)
-- Healthcheck preconfigured at `/api/health`
+- Paperclip running behind a lightweight setup wrapper (`src/server.js`)
+- Protected setup endpoints:
+  - `/setup`
+  - `/setup/api/status`
+  - `/setup/api/bootstrap`
+- Public health endpoint for Railway: `/setup/healthz`
+- Persistent bootstrap invite storage under `/paperclip/setup/bootstrap-invite.txt`
+- Strict secrets mode enabled (`PAPERCLIP_SECRETS_STRICT_MODE=true`)
 
-## How it works
+## Security defaults
 
-1. You deploy using the Railway template link.
-2. Railway provisions the service with template defaults.
-3. On first boot, entrypoint initializes Paperclip state under `/paperclip`.
-4. On future boots, persisted state is reused.
-5. Service health is checked via `/api/health`.
-
-## Railway deploy instructions
-
-1. Click the deploy button above.
-2. Set template variables (or keep defaults).
-3. Deploy.
-4. Open your service URL and verify `/api/health`.
-
-Template expectations:
-
-- Persistent volume mounted at `/paperclip`
-- Public networking enabled
-- Single replica (stateful default)
-
-## Default environment variables
-
-Recommended template variables:
+Use these environment values in Railway:
 
 ```env
 PAPERCLIP_SECRETS_MASTER_KEY=${{secret(64, "abcdef0123456789")}}
 PAPERCLIP_SECRETS_STRICT_MODE=true
 PAPERCLIP_PUBLIC_URL=https://${{RAILWAY_PUBLIC_DOMAIN}}
+SETUP_ENABLED=true
+SETUP_TOKEN=${{secret(48, "abcdef0123456789")}}
+SETUP_AUTO_BOOTSTRAP=true
+PAPERCLIP_INTERNAL_PORT=3101
 ```
 
 Notes:
-- `PAPERCLIP_SECRETS_MASTER_KEY` should be a 32-byte key (64 hex chars).
-- `PAPERCLIP_PUBLIC_URL` is wired to `RAILWAY_PUBLIC_DOMAIN`, which Railway auto-supplies when a public domain is enabled for the service.
-- Optional alternative: `PAPERCLIP_SECRETS_MASTER_KEY_FILE` for file-based key loading.
+- `PAPERCLIP_SECRETS_MASTER_KEY` must be 64 hex chars (32 bytes).
+- Keep `SETUP_TOKEN` secret; it gates `/setup` and `/setup/api/*`.
+- Bootstrap URL is persisted locally to avoid printing sensitive links in logs.
 
-Runtime variables commonly used:
+## Deployment flow
 
-- `PORT` (injected by Railway)
-- `OPENAI_API_KEY` (optional)
-- `ANTHROPIC_API_KEY` (optional)
+1. Deploy on Railway.
+2. Set env vars above (or import `.env.example`).
+3. Open:
+   - `https://<your-domain>/setup?token=<SETUP_TOKEN>`
+4. Use the setup page to fetch the bootstrap invite URL.
+5. Complete initial account bootstrap.
 
-## Runtime behavior
+## Healthcheck
 
-Entrypoint (`docker-entrypoint.sh`) does the following:
+Railway healthcheck is configured to:
 
-- Ensures `/paperclip` exists and is writable
-- Runs onboarding automatically when no existing config is found
-- Derives `PAPERCLIP_PUBLIC_URL` from `RAILWAY_PUBLIC_DOMAIN` if not provided
-- Starts Paperclip on `$PORT`
+- `GET /setup/healthz`
 
-## Simple usage guide
+This endpoint is intentionally public for platform liveness checks.
 
-After deploy:
+## Runtime architecture
 
-1. Open the generated public URL.
-2. Confirm health endpoint responds: `/api/health`.
-3. Complete onboarding (if prompted).
-4. Restart once and verify data persists.
-
-## Troubleshooting
-
-- Service restarts repeatedly:
-  - Check logs for startup errors.
-  - Verify volume mount exists at `/paperclip`.
-  - Verify app is listening on `$PORT`.
-
-- Data resets after redeploy:
-  - Confirm volume is mounted at `/paperclip`.
-  - Confirm app is writing state under `/paperclip`.
-
-- Public URL is incorrect:
-  - Set `PAPERCLIP_PUBLIC_URL` explicitly.
-  - Or verify `RAILWAY_PUBLIC_DOMAIN` is present.
-
-## Build pinning
-
-Docker build arg:
-
-- `PAPERCLIP_VERSION` (default: `latest`)
-
-Override in Railway if you want to pin a specific Paperclip release.
+- Wrapper server listens on external `$PORT` (default `3100`).
+- Paperclip runs internally on `PAPERCLIP_INTERNAL_PORT` (default `3101`).
+- Non-setup traffic is proxied to the internal Paperclip process.

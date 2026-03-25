@@ -15,13 +15,29 @@ RUN pnpm install --frozen-lockfile
 RUN pnpm --filter @paperclipai/server add hermes-paperclip-adapter@0.1.1
 RUN node - <<'NODE'
 const fs = require('fs');
-const p = '/opt/paperclip/server/src/adapters/registry.ts';
-let s = fs.readFileSync(p, 'utf8');
+const path = require('path');
+const root = '/opt/paperclip';
 
-const importAnchor = `import {
+function read(rel) {
+  return fs.readFileSync(path.join(root, rel), 'utf8');
+}
+function write(rel, content) {
+  fs.writeFileSync(path.join(root, rel), content);
+}
+function replaceOnce(content, from, to, err) {
+  if (!content.includes(from)) throw new Error(err || `anchor not found: ${from.slice(0, 80)}`);
+  return content.replace(from, to);
+}
+
+// 1) Server adapter registry: register hermes_local runtime adapter.
+{
+  const rel = 'server/src/adapters/registry.ts';
+  let s = read(rel);
+
+  const importAnchor = `import {
   agentConfigurationDoc as piAgentConfigurationDoc,
 } from "@paperclipai/adapter-pi-local";\n`;
-const hermesImports = `import {
+  const hermesImports = `import {
   execute as hermesExecute,
   testEnvironment as hermesTestEnvironment,
   sessionCodec as hermesSessionCodec,
@@ -32,12 +48,11 @@ import {
 } from "hermes-paperclip-adapter";
 `;
 
-if (!s.includes('from "hermes-paperclip-adapter/server"')) {
-  if (!s.includes(importAnchor)) throw new Error('registry import anchor not found');
-  s = s.replace(importAnchor, importAnchor + hermesImports);
-}
+  if (!s.includes('from "hermes-paperclip-adapter/server"')) {
+    s = replaceOnce(s, importAnchor, importAnchor + hermesImports, 'server registry import anchor not found');
+  }
 
-const hermesAdapterBlock = `
+  const hermesAdapterBlock = `
 const hermesLocalAdapter: ServerAdapterModule = {
   type: "hermes_local",
   execute: hermesExecute,
@@ -49,22 +64,105 @@ const hermesLocalAdapter: ServerAdapterModule = {
 };
 `;
 
-if (!s.includes('const hermesLocalAdapter: ServerAdapterModule = {')) {
-  const adaptersMapAnchor = 'const adaptersByType = new Map<string, ServerAdapterModule>(';
-  if (!s.includes(adaptersMapAnchor)) throw new Error('registry adapters map anchor not found');
-  s = s.replace(adaptersMapAnchor, hermesAdapterBlock + '\n' + adaptersMapAnchor);
-}
+  if (!s.includes('const hermesLocalAdapter: ServerAdapterModule = {')) {
+    const adaptersMapAnchor = 'const adaptersByType = new Map<string, ServerAdapterModule>(';
+    s = replaceOnce(s, adaptersMapAnchor, hermesAdapterBlock + '\n' + adaptersMapAnchor, 'server registry map anchor not found');
+  }
 
-if (!s.includes('hermesLocalAdapter,')) {
-  const mapAnchor = `    openclawGatewayAdapter,
+  if (!s.includes('hermesLocalAdapter,')) {
+    const mapAnchor = `    openclawGatewayAdapter,
     processAdapter,`;
-  if (!s.includes(mapAnchor)) throw new Error('registry map anchor not found');
-  s = s.replace(mapAnchor, `    openclawGatewayAdapter,
+    s = replaceOnce(s, mapAnchor, `    openclawGatewayAdapter,
     hermesLocalAdapter,
-    processAdapter,`);
+    processAdapter,`, 'server registry adapter insertion anchor not found');
+  }
+
+  write(rel, s);
 }
 
-fs.writeFileSync(p, s);
+// 2) Shared adapter types: include hermes_local so validators + UI type lists accept it.
+{
+  const rel = 'packages/shared/src/constants.ts';
+  let s = read(rel);
+  if (!s.includes('"hermes_local"')) {
+    const anchor = '  "opencode_local",\n  "pi_local",';
+    s = replaceOnce(s, anchor, '  "opencode_local",\n  "hermes_local",\n  "pi_local",', 'shared constants adapter list anchor not found');
+    write(rel, s);
+  }
+}
+
+// 3) UI labels + enabled adapters in form.
+{
+  const rel = 'ui/src/components/agent-config-primitives.tsx';
+  let s = read(rel);
+  if (!s.includes('hermes_local: "Hermes (local)"')) {
+    const anchor = '  opencode_local: "OpenCode (local)",\n';
+    s = replaceOnce(s, anchor, '  opencode_local: "OpenCode (local)",\n  hermes_local: "Hermes (local)",\n', 'adapter labels anchor not found');
+    write(rel, s);
+  }
+}
+
+{
+  const rel = 'ui/src/components/AgentConfigForm.tsx';
+  let s = read(rel);
+
+  s = s.replace(
+    '    adapterType === "opencode_local" ||\n    adapterType === "cursor";',
+    '    adapterType === "opencode_local" ||\n    adapterType === "hermes_local" ||\n    adapterType === "cursor";'
+  );
+
+  s = s.replace(
+    'const ENABLED_ADAPTER_TYPES = new Set(["claude_local", "codex_local", "gemini_local", "opencode_local", "cursor"]);',
+    'const ENABLED_ADAPTER_TYPES = new Set(["claude_local", "codex_local", "gemini_local", "opencode_local", "hermes_local", "cursor"]);'
+  );
+
+  s = s.replace(
+    '                        : adapterType === "opencode_local"\n                          ? "opencode"\n                          : "claude"',
+    '                        : adapterType === "opencode_local"\n                          ? "opencode"\n                        : adapterType === "hermes_local"\n                          ? "hermes"\n                          : "claude"'
+  );
+
+  write(rel, s);
+}
+
+// 4) UI adapter registry: wire hermes stdout parser + config builder.
+{
+  const rel = 'ui/src/adapters/registry.ts';
+  let s = read(rel);
+
+  if (!s.includes('hermesLocalUIAdapter')) {
+    const importAnchor = 'import { openCodeLocalUIAdapter } from "./opencode-local";\n';
+    s = replaceOnce(s, importAnchor, importAnchor + 'import { hermesLocalUIAdapter } from "./hermes-local";\n', 'ui adapter registry import anchor not found');
+
+    const listAnchor = '    openCodeLocalUIAdapter,\n';
+    s = replaceOnce(s, listAnchor, listAnchor + '    hermesLocalUIAdapter,\n', 'ui adapter registry list anchor not found');
+  }
+
+  write(rel, s);
+}
+
+// 5) Add minimal Hermes UI adapter module.
+{
+  const dir = path.join(root, 'ui/src/adapters/hermes-local');
+  const file = path.join(dir, 'index.ts');
+  fs.mkdirSync(dir, { recursive: true });
+  if (!fs.existsSync(file)) {
+    fs.writeFileSync(file, `import type { UIAdapterModule, AdapterConfigFieldsProps } from "../types";
+import { parseHermesStdoutLine, buildHermesConfig } from "hermes-paperclip-adapter/ui";
+
+function HermesLocalConfigFields(_props: AdapterConfigFieldsProps) {
+  return null;
+}
+
+export const hermesLocalUIAdapter: UIAdapterModule = {
+  type: "hermes_local",
+  label: "Hermes (local)",
+  parseStdoutLine: parseHermesStdoutLine,
+  ConfigFields: HermesLocalConfigFields,
+  buildAdapterConfig: buildHermesConfig,
+};
+`);
+  }
+}
 NODE
 RUN pnpm --filter @paperclipai/ui build
 RUN pnpm --filter @paperclipai/server build

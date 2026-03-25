@@ -12,7 +12,8 @@ Deploy Paperclip to Railway with a setup wrapper on the public port.
 - `/` redirects to `/setup` until the first `instance_admin` exists.
 - Healthcheck is wrapper-specific: `/wrapper/healthz` (see `railway.json`).
 - Setup/bootstrap is wrapper + DB native (no runtime CLI onboarding path).
-- Runtime image includes `codex`, `claude`, `opencode`, `tsx`, `git`, `gh`.
+- Runtime image includes `codex`, `claude`, `opencode`, `hermes`, `tsx`, `git`, `gh`.
+- Build injects `hermes-paperclip-adapter` into Paperclip server registry (adapter type: `hermes_local`).
 
 ## Endpoints
 
@@ -28,6 +29,7 @@ Deploy Paperclip to Railway with a setup wrapper on the public port.
 - `PAPERCLIP_REF` (default: `v0.3.1`)
 - `CODEX_VERSION` (default: `latest`)
 - `CLAUDE_CODE_VERSION` (default: `latest`)
+- `HERMES_AGENT_VERSION` (default: `latest`)
 
 ## Railway variables (auto-configured)
 

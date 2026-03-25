@@ -86,10 +86,12 @@ RUN apt-get update \
 RUN npm install --global --omit=dev @openai/codex@${CODEX_VERSION} opencode-ai tsx
 RUN curl -fsSL https://claude.ai/install.sh | bash -s -- "${CLAUDE_CODE_VERSION}"
 RUN if [ "${HERMES_AGENT_VERSION}" = "latest" ]; then \
-      python3 -m pip install --break-system-packages --no-cache-dir hermes-agent; \
+      curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash -s -- --skip-setup --branch main; \
     else \
-      python3 -m pip install --break-system-packages --no-cache-dir "hermes-agent==${HERMES_AGENT_VERSION}"; \
+      curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash -s -- --skip-setup --branch "${HERMES_AGENT_VERSION}"; \
     fi
+
+ENV PATH="/root/.local/bin:${PATH}"
 
 # Claude installer may place launcher under root's local bin; make it globally discoverable.
 RUN set -eux; \

@@ -10,10 +10,28 @@ Deploy Paperclip to Railway with a setup wrapper on the public port.
 - Wrapper process (`src/server.js`) is always the public ingress.
 - Backend runs internally on `PAPERCLIP_INTERNAL_PORT` (default `3101`) and is proxied by the wrapper.
 - `/` redirects to `/setup` until the first `instance_admin` exists.
-- Healthcheck is wrapper-specific: `/wrapper/healthz` (see `railway.json`).
+- Healthcheck is wrapper-specific: `/wrapper/healthz` (see `.railway/railway.ts`).
 - Setup/bootstrap is wrapper + DB native (no runtime CLI onboarding path).
 - Runtime image includes `codex`, `claude`, `opencode`, `hermes`, `tsx`, `git`, `gh`.
 - Build injects `hermes-paperclip-adapter` into Paperclip server registry (adapter type: `hermes_local`).
+
+## Railway Infrastructure as Code
+
+Railway configuration is defined with the supported TypeScript IaC format in
+`.railway/railway.ts`; the deprecated `railway.json` Config as Code file has
+been removed.
+
+After linking the repository to the intended Railway project and environment:
+
+```bash
+npm install
+npm run railway:plan
+npm run railway:apply
+```
+
+Always review the plan before applying it. Infrastructure as Code manages the
+linked Railway environment, while the template's deployment button remains the
+normal first-deploy path for end users.
 
 ## Endpoints
 

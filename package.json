@@ -6,7 +6,8 @@
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
-    "typecheck": "node --check src/server.js && npm run typecheck:iac",
+    "test": "node --test test/*.test.js",
+    "typecheck": "node --check src/server.js && node --check test/server.test.js && npm run typecheck:iac",
     "typecheck:iac": "tsc --noEmit --module NodeNext --moduleResolution NodeNext --target ES2022 .railway/railway.ts",
     "railway:plan": "railway config plan",
     "railway:apply": "railway config apply"

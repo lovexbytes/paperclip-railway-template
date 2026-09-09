@@ -13,8 +13,8 @@ const HOST = process.env.HOST || '0.0.0.0';
 const WRAPPER_VERSION = 'setup-wrapper';
 const BACKEND_CWD = process.env.PAPERCLIP_BACKEND_CWD || '/opt/paperclip';
 const BACKEND_ENTRY = process.env.PAPERCLIP_BACKEND_ENTRY || 'server/dist/index.js';
-const BACKEND_TSX_BIN = process.env.PAPERCLIP_BACKEND_TSX_BIN || path.join(BACKEND_CWD, 'node_modules/.bin/tsx');
-const GLOBAL_TSX_BIN = '/usr/local/bin/tsx';
+const BACKEND_TSX_LOADER = process.env.PAPERCLIP_BACKEND_TSX_LOADER
+  || 'server/node_modules/tsx/dist/loader.mjs';
 
 console.log(`[setup-wrapper] ${WRAPPER_VERSION} process starting`);
 
@@ -476,16 +476,18 @@ let child;
 
 function startBackend() {
   const backendEntryPath = path.join(BACKEND_CWD, BACKEND_ENTRY);
+  const backendLoaderPath = path.join(BACKEND_CWD, BACKEND_TSX_LOADER);
   if (!fs.existsSync(backendEntryPath)) {
     console.error(`[setup-wrapper] backend entry missing: ${backendEntryPath}`);
     process.exit(1);
   }
+  if (!fs.existsSync(backendLoaderPath)) {
+    console.error(`[setup-wrapper] backend TSX loader missing: ${backendLoaderPath}`);
+    process.exit(1);
+  }
 
-  const tsxBin = fs.existsSync(BACKEND_TSX_BIN)
-    ? BACKEND_TSX_BIN
-    : (fs.existsSync(GLOBAL_TSX_BIN) ? GLOBAL_TSX_BIN : '');
-  const command = tsxBin || 'node';
-  const args = [BACKEND_ENTRY];
+  const command = 'node';
+  const args = ['--import', `./${BACKEND_TSX_LOADER}`, BACKEND_ENTRY];
 
   console.log(`[setup-wrapper] launching backend: ${command} ${args.join(' ')} (cwd=${BACKEND_CWD})`);
 

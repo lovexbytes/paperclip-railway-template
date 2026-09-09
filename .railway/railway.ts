@@ -1,8 +1,17 @@
-import { defineRailway, project, service } from "railway/iac";
+import { defineRailway, postgres, project, service, volume } from "railway/iac";
+
+const database = postgres("Postgres");
+const paperclipData = volume("paperclip-data");
 
 const paperclip = service("paperclip", {
   build: {
     builder: "DOCKERFILE",
+  },
+  variables: {
+    DATABASE_URL: database.env.DATABASE_URL,
+  },
+  volumeMounts: {
+    "/paperclip": paperclipData,
   },
   deploy: {
     numReplicas: 1,
@@ -15,6 +24,6 @@ const paperclip = service("paperclip", {
 
 export default defineRailway(() =>
   project("paperclip-railway-template", {
-    resources: [paperclip],
+    resources: [database, paperclipData, paperclip],
   }),
 );

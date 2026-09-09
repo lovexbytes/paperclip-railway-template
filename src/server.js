@@ -2,10 +2,11 @@
 
 const http = require('http');
 const { spawn } = require('child_process');
-const { createHash, randomBytes } = require('crypto');
+const { randomBytes } = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { Client } = require('pg');
+const { hashToken, validateStoredBootstrapUrl } = require('./bootstrap');
 
 const EXTERNAL_PORT = Number(process.env.PORT || 3100);
 const INTERNAL_PORT = Number(process.env.PAPERCLIP_INTERNAL_PORT || 3101);
@@ -20,8 +21,15 @@ console.log(`[setup-wrapper] ${WRAPPER_VERSION} process starting`);
 
 const PAPERCLIP_HOME = process.env.PAPERCLIP_HOME || process.env.HOME || '/paperclip';
 const SETUP_ENABLED = (process.env.SETUP_ENABLED || 'true').toLowerCase() !== 'false';
-const SETUP_TOKEN = process.env.SETUP_TOKEN || '';
+const SETUP_TOKEN = (process.env.SETUP_TOKEN || '').trim();
 const SETUP_AUTO_BOOTSTRAP = (process.env.SETUP_AUTO_BOOTSTRAP || 'true').toLowerCase() !== 'false';
+const DEPLOYMENT_MODE = (process.env.PAPERCLIP_DEPLOYMENT_MODE || '').toLowerCase();
+const DEPLOYMENT_EXPOSURE = (process.env.PAPERCLIP_DEPLOYMENT_EXPOSURE || '').toLowerCase();
+
+if (SETUP_ENABLED && DEPLOYMENT_MODE === 'authenticated' && DEPLOYMENT_EXPOSURE === 'public' && !SETUP_TOKEN) {
+  console.error('[setup-wrapper] SETUP_TOKEN is required for public authenticated deployments');
+  process.exit(1);
+}
 
 const setupDir = path.join(PAPERCLIP_HOME, 'setup');
 const bootstrapFilePath = path.join(setupDir, 'bootstrap-invite.txt');
@@ -44,7 +52,29 @@ function readStoredBootstrapUrl() {
 
 function storeBootstrapUrl(url) {
   ensureSetupDir();
-  fs.writeFileSync(bootstrapFilePath, `${url.trim()}\n`, { mode: 0o600 });
+  const temporaryPath = `${bootstrapFilePath}.${process.pid}.tmp`;
+  fs.writeFileSync(temporaryPath, `${url.trim()}\n`, { mode: 0o600 });
+  fs.renameSync(temporaryPath, bootstrapFilePath);
+}
+
+async function readValidStoredBootstrapUrl() {
+  const storedUrl = readStoredBootstrapUrl();
+  if (!storedUrl) return '';
+
+  const dbUrl = (process.env.DATABASE_URL || '').trim();
+  if (!dbUrl) return '';
+  const client = new Client({ connectionString: dbUrl });
+  try {
+    await client.connect();
+    if (await validateStoredBootstrapUrl(storedUrl, client)) return storedUrl;
+  } catch (error) {
+    throw new Error('Unable to validate stored bootstrap invite', { cause: error });
+  } finally {
+    await client.end().catch(() => undefined);
+  }
+
+  fs.rmSync(bootstrapFilePath, { force: true });
+  return '';
 }
 
 function getTokenFromRequest(reqUrl, headers) {
@@ -111,10 +141,6 @@ function getRequestBaseUrl(req) {
 
 function createInviteToken() {
   return `pcp_bootstrap_${randomBytes(24).toString('hex')}`;
-}
-
-function hashToken(token) {
-  return createHash('sha256').update(token).digest('hex');
 }
 
 async function createBootstrapInvite(baseUrl) {
@@ -473,6 +499,13 @@ const backendEnv = {
 };
 
 let child;
+let shuttingDown = false;
+let serverClosed = false;
+let childExited = false;
+
+function finishShutdown() {
+  if (shuttingDown && serverClosed && childExited) process.exit(0);
+}
 
 function startBackend() {
   const backendEntryPath = path.join(BACKEND_CWD, BACKEND_ENTRY);
@@ -499,7 +532,9 @@ function startBackend() {
 
   child.on('exit', (code, signal) => {
     console.error(`[setup-wrapper] Paperclip process exited (code=${code}, signal=${signal || 'none'})`);
-    process.exit(code || 1);
+    childExited = true;
+    if (shuttingDown) finishShutdown();
+    else process.exit(code || 1);
   });
 }
 
@@ -513,7 +548,14 @@ async function getStatusPayload(reqUrl, headers) {
   }
 
   const authorized = isSetupApiAuthorized(reqUrl, headers);
-  const bootstrapUrl = authorized ? readStoredBootstrapUrl() : '';
+  let bootstrapUrl = '';
+  if (authorized) {
+    try {
+      bootstrapUrl = await readValidStoredBootstrapUrl();
+    } catch {
+      // Never replace an invite merely because validation was temporarily unavailable.
+    }
+  }
   const instanceOnboarded = await hasInstanceAdmin();
 
   return {
@@ -533,7 +575,7 @@ async function getStatusPayload(reqUrl, headers) {
 if (SETUP_AUTO_BOOTSTRAP) {
   setTimeout(async () => {
     try {
-      if (!readStoredBootstrapUrl() && !(await hasInstanceAdmin())) {
+      if (!(await readValidStoredBootstrapUrl()) && !(await hasInstanceAdmin())) {
         const baseUrl = (process.env.PAPERCLIP_PUBLIC_URL || `http://localhost:${EXTERNAL_PORT}`).replace(/\/+$/, '');
         const url = await createBootstrapInvite(baseUrl);
         storeBootstrapUrl(url);
@@ -550,7 +592,12 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname === '/wrapper/healthz') {
     const backendReachable = await requestBackend('/api/health').then((r) => r.ok).catch(() => false);
-    return sendJson(res, 200, { ok: true, component: 'setup-wrapper', version: WRAPPER_VERSION, backendReachable });
+    return sendJson(res, backendReachable ? 200 : 503, {
+      ok: backendReachable,
+      component: 'setup-wrapper',
+      version: WRAPPER_VERSION,
+      backendReachable
+    });
   }
 
   if (pathname === '/setup/healthz') {
@@ -587,7 +634,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     try {
-      let bootstrapUrl = readStoredBootstrapUrl();
+      let bootstrapUrl = await readValidStoredBootstrapUrl();
       if (!bootstrapUrl) {
         const baseUrl = getRequestBaseUrl(req);
         bootstrapUrl = await createBootstrapInvite(baseUrl);
@@ -617,15 +664,20 @@ server.listen(EXTERNAL_PORT, HOST, () => {
 });
 
 function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
   console.log(`[setup-wrapper] ${signal} received, shutting down...`);
+  if (child && !child.killed) child.kill('SIGTERM');
   server.close(() => {
-    if (child && !child.killed) {
-      child.kill('SIGTERM');
-    }
-    process.exit(0);
+    serverClosed = true;
+    finishShutdown();
   });
 
-  setTimeout(() => process.exit(0), 5000).unref();
+  setTimeout(() => {
+    if (!childExited && child) child.kill('SIGKILL');
+    server.closeAllConnections?.();
+    setTimeout(() => process.exit(0), 100).unref();
+  }, 5000).unref();
 }
 
 process.on('SIGINT', () => shutdown('SIGINT'));

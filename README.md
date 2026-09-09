@@ -36,7 +36,7 @@ Railway configuration lives in `.railway/railway.ts` and owns:
 - the `paperclip` service;
 - the `Postgres` database;
 - the `paperclip-data` volume mounted at `/paperclip`;
-- the wrapper-specific `/wrapper/healthz` deployment healthcheck.
+- the backend-aware `/wrapper/healthz` deployment readiness check.
 
 After linking the repository to the intended Railway project and environment:
 
@@ -69,6 +69,8 @@ The public Railway template should configure:
 - `PAPERCLIP_INTERNAL_PORT="3101"`
 - `PAPERCLIP_SECRETS_MASTER_KEY="${{secret(64, \"abcdef0123456789\")}}"`
 - `PAPERCLIP_SECRETS_STRICT_MODE="true"`
+
+For public authenticated deployments, the wrapper refuses to start when `SETUP_TOKEN` is missing or empty.
 
 `.railway/railway.ts` wires `DATABASE_URL` from its PostgreSQL resource. The entrypoint derives the two public URL variables from `RAILWAY_PUBLIC_DOMAIN` when they are absent, but explicit template values remain preferred.
 
@@ -116,7 +118,7 @@ curl -fsS https://<domain>/setup/api/status
 curl -fsS https://<domain>/api/health
 ```
 
-Check response bodies, not only HTTP status. The wrapper health endpoint reports `backendReachable`; Railway currently uses the wrapper endpoint so the setup UI can remain reachable while Paperclip starts.
+`/wrapper/healthz` returns `503` until Paperclip's `/api/health` succeeds, so Railway does not promote a wrapper whose backend is unavailable. `/setup/healthz` remains the wrapper-only liveness endpoint and reports backend state in its response body.
 
 ## Storage
 

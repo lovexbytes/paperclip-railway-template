@@ -184,6 +184,20 @@ test('shutdown signals the backend immediately even when an HTTP connection rema
   fs.rmSync(signalFile, { force: true });
 });
 
+test('bootstrap invite creation serializes concurrent generators before reading state', () => {
+  const source = fs.readFileSync(path.resolve('src/server.js'), 'utf8');
+  const beginAt = source.indexOf("await client.query('BEGIN')");
+  const lockAt = source.indexOf('pg_advisory_xact_lock', beginAt);
+  const adminReadAt = source.indexOf('FROM instance_user_roles', beginAt);
+  const inviteWriteAt = source.indexOf('UPDATE invites', beginAt);
+
+  assert.notEqual(beginAt, -1);
+  assert.notEqual(lockAt, -1);
+  assert.ok(lockAt > beginAt, 'lock must be transaction-scoped');
+  assert.ok(lockAt < adminReadAt, 'lock must be acquired before checking onboarding state');
+  assert.ok(lockAt < inviteWriteAt, 'lock must be acquired before revoking or inserting invites');
+});
+
 test('stored bootstrap URL is accepted only while its database invite is live', async () => {
   const { validateStoredBootstrapUrl } = require('../src/bootstrap');
   const liveClient = {

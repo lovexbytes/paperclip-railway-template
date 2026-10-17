@@ -151,6 +151,10 @@ async function createBootstrapInvite(baseUrl) {
   try {
     await client.connect();
     await client.query('BEGIN');
+    await client.query(
+      'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
+      ['paperclip-bootstrap-ceo']
+    );
 
     const adminResult = await client.query(
       'SELECT COUNT(*)::int AS count FROM instance_user_roles WHERE role = $1',

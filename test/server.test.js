@@ -72,14 +72,11 @@ async function eventually(operation, timeoutMs = 10_000) {
 function makeFixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'paperclip-wrapper-'));
   tempDirs.add(root);
-  const loader = path.join(root, 'server/node_modules/tsx/dist/loader.mjs');
-  const backend = path.join(root, 'server/dist/index.js');
-  fs.mkdirSync(path.dirname(loader), { recursive: true });
+  const backend = path.join(root, 'server/dist-runtime/index.mjs');
   fs.mkdirSync(path.dirname(backend), { recursive: true });
-  fs.writeFileSync(loader, 'export {};\n');
   fs.writeFileSync(backend, `
-    const fs = require('node:fs');
-    const http = require('node:http');
+    import fs from 'node:fs';
+    import http from 'node:http';
     const readyAt = Date.now() + Number(process.env.FIXTURE_HEALTH_DELAY_MS || 0);
     const server = http.createServer((req, res) => {
       if (req.url === '/api/health' && Date.now() >= readyAt) {
@@ -138,7 +135,7 @@ test('wrapper starts the upstream command shape and reports backend readiness', 
     version: 'setup-wrapper',
     backendReachable: true,
   });
-  assert.match(running.getLogs(), /launching backend: node --import \.\/server\/node_modules\/tsx\/dist\/loader\.mjs server\/dist\/index\.js/);
+  assert.match(running.getLogs(), /launching backend: node server\/dist-runtime\/index\.mjs /);
 });
 
 test('public authenticated setup fails closed when SETUP_TOKEN is missing', async () => {
